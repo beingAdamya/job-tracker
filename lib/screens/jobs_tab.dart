@@ -4,6 +4,7 @@ import '../models/job.dart';
 import '../services/storage_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/job_card.dart';
+import '../services/job_keys.dart';
 
 class JobsTab extends StatefulWidget {
   const JobsTab({super.key});
@@ -91,7 +92,7 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
     final owners = <String, String>{}; // job key → company that "owns" it
     final unique = <Job>[];
     for (final j in ordered) {
-      final key = _dupKey(j);
+      final key = duplicateKey(j);
       final owner = owners[key];
       if (owner != null && owner != j.companyId) continue; // a copy → skip
       owners[key] = j.companyId;
@@ -155,21 +156,13 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
     }
   }
 
-  String _dupKey(Job j) {
-    String clean(String s) =>
-        s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-
-    final city = j.location.split(',').first; // "San Francisco, CA" → city only
-    return '${clean(j.title)}|${clean(city)}';
-  }
-
   // This job + the same job listed by OTHER companies
   List<Job> _copiesOf(Job job) {
-    final key = _dupKey(job);
+    final key = duplicateKey(job);
     return _jobs
         .where((j) =>
             j.id == job.id ||
-            (j.companyId != job.companyId && _dupKey(j) == key))
+            (j.companyId != job.companyId && duplicateKey(j) == key))
         .toList();
   }
 

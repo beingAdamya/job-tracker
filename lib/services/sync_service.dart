@@ -18,7 +18,7 @@ class SyncService {
   // the window (for example after raising the job limit): no notification
   static const int freshDays = 14;
 
-  static bool _isFresh(Job job) {
+  static bool isFresh(Job job) {                       // was: _isFresh
     return DateTime.now().difference(job.postedDate).inDays <= freshDays;
   }
 
@@ -48,7 +48,7 @@ class SyncService {
           final old = savedById[job.id];
           if (old == null) {
             newJobs.add(job); // never seen before
-            if (hadJobsBefore && !company.isMuted && _isFresh(job)) {
+            if (hadJobsBefore && !company.isMuted && isFresh(job)) {
               notifiable.add(job);
             }
           } else {

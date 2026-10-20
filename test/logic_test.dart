@@ -4,6 +4,27 @@ import 'package:job_tracker/models/company.dart';
 import 'package:job_tracker/models/job.dart';
 import 'package:job_tracker/services/board_detector.dart';
 import 'package:job_tracker/services/job_fetcher.dart';
+import 'package:job_tracker/services/job_keys.dart';
+import 'package:job_tracker/services/sync_service.dart';
+
+Job makeJob({
+  String title = 'Engineer',
+  String location = 'Mumbai',
+  int daysAgo = 0,
+}) {
+  return Job(
+    id: 'x',
+    companyId: 'c',
+    companyName: 'Co',
+    title: title,
+    role: 'R',
+    location: location,
+    mode: 'Remote',
+    description: 'D',
+    url: 'https://example.com',
+    postedDate: DateTime.now().subtract(Duration(days: daysAgo)),
+  );
+}
 
 void main() {
   group('AppSettings', () {
@@ -96,4 +117,39 @@ void main() {
       expect(JobFetcher.htmlToText(html), 'Hello world\n• One\n• Two');
     });
   });
+
+  group('SyncService.isFresh', () {
+    test('a job posted yesterday is fresh', () {
+      expect(SyncService.isFresh(makeJob(daysAgo: 1)), true);
+    });
+
+    test('a job posted today is fresh', () {
+      expect(SyncService.isFresh(makeJob()), true);
+    });
+
+    test('a job posted 30 days ago is not fresh', () {
+      expect(SyncService.isFresh(makeJob(daysAgo: 30)), false);
+    });
+  });
+
+  group('duplicateKey', () {
+    test('ignores capitals, punctuation and anything after the first comma', () {
+      final a = makeJob(title: 'Senior Animator', location: 'San Francisco, CA');
+      final b = makeJob(title: 'senior  animator!', location: 'san francisco, California');
+      expect(duplicateKey(a), duplicateKey(b));
+    });
+
+    test('different cities give different keys', () {
+      final a = makeJob(title: 'Animator', location: 'London, UK');
+      final b = makeJob(title: 'Animator', location: 'Mumbai, India');
+      expect(duplicateKey(a), isNot(duplicateKey(b)));
+    });
+
+    test('different titles give different keys', () {
+      final a = makeJob(title: 'Animator');
+      final b = makeJob(title: 'Compositor');
+      expect(duplicateKey(a), isNot(duplicateKey(b)));
+    });
+  });
+
 }
