@@ -22,3 +22,7 @@ and notifies you about new jobs.
 ## Built with
 Flutter, http, html, shared_preferences, url_launcher, workmanager,
 flutter_local_notifications, permission_handler
+
+## Download
+Get the latest installable APK from the
+[Releases page](https://github.com/YOURNAME/job-tracker/releases/latest).
