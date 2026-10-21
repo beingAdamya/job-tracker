@@ -5,6 +5,7 @@ import 'dart:async';
 import '../services/job_fetcher.dart';
 import '../widgets/app_snack.dart';
 import '../widgets/layout.dart';
+import '../widgets/diagnostics_sheet.dart';
 
 class CompaniesTab extends StatefulWidget {
   const CompaniesTab({super.key});
@@ -153,8 +154,8 @@ class _CompaniesTabState extends State<CompaniesTab> {
 
                 try {
                   final test = Company(id: 'test', name: name, link: link);
-                  final jobs = await JobFetcher.fetch(test, quick: true);
-                  if (jobs.isEmpty) {
+                  final result = await JobFetcher.fetch(test, quick: true);
+                  if (result.jobs.isEmpty) {
                     throw Exception('The page loaded, but no jobs were found');
                   }
                 } catch (e) {

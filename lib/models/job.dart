@@ -1,53 +1,17 @@
 class Job {
   final String id;
-  final String companyId;    // which company this job belongs to
+  final String companyId;
   String companyName;
-  final String title;        // e.g. "Software Engineer"
-  final String role;         // e.g. "Engineering" (department)
-  final String location;     // e.g. "Bengaluru"
-  final String mode;         // "On-site", "Remote" or "Hybrid"
-  final String description;  // full details + requirements
-  final String url;          // link to open in browser
+  final String title;
+  final String role;
+  final String location;
+  final String mode;
+  final String description;
+  final String url;
   final DateTime postedDate;
   bool isFavourite;
   bool isRemoved;
-  bool noLongerListed;
-    
-    Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'companyId': companyId,
-      'companyName': companyName,
-      'title': title,
-      'role': role,
-      'location': location,
-      'mode': mode,
-      'description': description,
-      'url': url,
-      'postedDate': postedDate.toIso8601String(), // date → text
-      'isFavourite': isFavourite,
-      'isRemoved': isRemoved,
-      'noLongerListed': noLongerListed,
-    };
-  }
-
-  factory Job.fromJson(Map<String, dynamic> json) {
-    return Job(
-      id: json['id'],
-      companyId: json['companyId'],
-      companyName: json['companyName'],
-      title: json['title'],
-      role: json['role'],
-      location: json['location'],
-      mode: json['mode'],
-      description: json['description'],
-      url: json['url'],
-      postedDate: DateTime.parse(json['postedDate']), // text → date
-      isFavourite: json['isFavourite'] ?? false,
-      isRemoved: json['isRemoved'] ?? false,
-      noLongerListed: json['noLongerListed'] ?? false,
-    );
-  }
+  DateTime? unavailableSince; // when we noticed the website stopped listing it
 
   Job({
     required this.id,
@@ -62,6 +26,46 @@ class Job {
     required this.postedDate,
     this.isFavourite = false,
     this.isRemoved = false,
-    this.noLongerListed = false,
+    this.unavailableSince,
   });
+
+  // true = the website no longer lists this job
+  bool get noLongerListed => unavailableSince != null;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'companyId': companyId,
+      'companyName': companyName,
+      'title': title,
+      'role': role,
+      'location': location,
+      'mode': mode,
+      'description': description,
+      'url': url,
+      'postedDate': postedDate.toIso8601String(),
+      'isFavourite': isFavourite,
+      'isRemoved': isRemoved,
+      'unavailableSince': unavailableSince?.toIso8601String(),
+    };
+  }
+
+  factory Job.fromJson(Map<String, dynamic> json) {
+    return Job(
+      id: json['id'],
+      companyId: json['companyId'],
+      companyName: json['companyName'],
+      title: json['title'],
+      role: json['role'],
+      location: json['location'],
+      mode: json['mode'],
+      description: json['description'],
+      url: json['url'],
+      postedDate: DateTime.parse(json['postedDate']),
+      isFavourite: json['isFavourite'] ?? false,
+      isRemoved: json['isRemoved'] ?? false,
+      unavailableSince:
+          DateTime.tryParse((json['unavailableSince'] ?? '').toString()),
+    );
+  }
 }

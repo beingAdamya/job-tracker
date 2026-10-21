@@ -5,6 +5,11 @@ import '../models/job.dart';
 import 'board_detector.dart';
 import 'package:html/parser.dart' show parse;
 import 'package:html/dom.dart' show Document, Element;
+import 'diagnostics_service.dart';
+import 'extractors/platforms.dart';
+import 'extractors/smart_extractors.dart';
+import 'fetch_log.dart';
+import 'fetch_result.dart';
 
 
 class JobFetcher {
@@ -13,42 +18,101 @@ class JobFetcher {
   static const int maxGenericLinks = 40;
 
   // ===== MAIN ENTRY: pick the right method for this company's link =====
-  static Future<List<Job>> fetch(Company company,
+  static Future<FetchResult> fetch(Company company,
       {Map<String, Job> known = const {},
       bool quick = false,
       int maxAgeDays = 0}) async {
-    List<Job> jobs;
+    final log = FetchLog.start(company);
+    final timer = Stopwatch()..start();
 
-    switch (detectBoard(company.link)) {
-      case 'greenhouse':
-        jobs = await _fetchGreenhouse(company);
-        break;
-      case 'lever':
-        jobs = await _fetchLever(company);
-        break;
-      case 'ashby':
-        jobs = await _fetchAshby(company);
-        break;
-      case 'workday':
-        jobs = await _fetchWorkday(company, known, quick);
-        break;
-      default:
-        jobs = await _fetchGeneric(company, known, quick);
-        break;
+    List<Job> jobs = [];
+    var complete = false; // did we read the page's WHOLE job list?
+    final board = detectBoard(company.link);
+    log.add('Link type: ${board == 'unsupported' ? 'general web page' : board}');
+
+    try {
+      switch (board) {
+        case 'greenhouse':
+          jobs = await _fetchGreenhouse(company);
+          complete = true;
+          break;
+        case 'lever':
+          jobs = await _fetchLever(company);
+          complete = true;
+          break;
+        case 'ashby':
+          jobs = await _fetchAshby(company);
+          complete = true;
+          break;
+        case 'workday':
+          jobs = await _fetchWorkday(company, known, quick);
+          // fewer jobs than the limit = the pages ran out = whole list
+          complete = !quick && jobs.length < maxJobsPerCompany;
+          break;
+        case 'smartrecruiters':
+          {
+            final r = await Platforms.smartRecruiters(company, maxJobsPerCompany);
+            jobs = r.jobs;
+            complete = r.complete;
+            break;
+          }
+        case 'workable':
+          {
+            final r = await Platforms.workable(company);
+            jobs = r.jobs;
+            complete = r.complete;
+            break;
+          }
+        default:
+          jobs = await _fetchGeneric(company, known, quick);
+          break;
+      }
+    } catch (e) {
+      log.add('Failed: ${e.toString().replaceFirst('Exception: ', '')}');
+      if (company.id != 'test') await DiagnosticsService.save(company, log);
+      rethrow;
     }
 
+    // One job per id
+    final byId = <String, Job>{};
+    for (final j in jobs) {
+      byId[j.id] = j;
+    }
+    jobs = byId.values.toList();
+
+    final seenIds = jobs.map((j) => j.id).toSet();
+    log.add('Found ${jobs.length} jobs on the page');
+
+    // Keep only jobs posted within the chosen time window (0 = any age)
     if (maxAgeDays > 0) {
       final cutoff = DateTime.now().subtract(Duration(days: maxAgeDays));
       jobs = jobs.where((j) => j.postedDate.isAfter(cutoff)).toList();
+      log.add('Inside the $maxAgeDays-day window: ${jobs.length}');
     }
 
-
-    // Newest first, then keep only the top 100
+    // Newest first, then keep only the top ones
     jobs.sort((a, b) => b.postedDate.compareTo(a.postedDate));
     if (jobs.length > maxJobsPerCompany) {
       jobs = jobs.sublist(0, maxJobsPerCompany);
+      log.add('Kept the newest $maxJobsPerCompany');
     }
-    return jobs;
+
+    log.add('Done in ${timer.elapsedMilliseconds} ms');
+    if (company.id != 'test') await DiagnosticsService.save(company, log);
+
+    return FetchResult(jobs: jobs, seenIds: seenIds, complete: complete);
+  }
+
+  // true only for a clear "this page does not exist" answer (404 or 410)
+  static Future<bool> pageIsGone(String url) async {
+    try {
+      final r = await http.get(Uri.parse(url), headers: {
+        'User-Agent': 'JobTrackerApp/1.0 (college project)',
+      }).timeout(const Duration(seconds: 20));
+      return r.statusCode == 404 || r.statusCode == 410;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ===== HELPERS =====
@@ -395,6 +459,9 @@ class JobFetcher {
 
       final isBoard = host == 'boards.greenhouse.io' ||
           host == 'job-boards.greenhouse.io' ||
+          host == 'jobs.smartrecruiters.com' ||
+          host == 'careers.smartrecruiters.com' ||
+          host == 'apply.workable.com' ||
           host == 'jobs.lever.co' ||
           host == 'jobs.ashbyhq.com' ||
           host.endsWith('.myworkdayjobs.com');
@@ -416,6 +483,10 @@ class JobFetcher {
         return _fetchAshby(c);
       case 'workday':
         return _fetchWorkday(c, known, quick);
+      case 'smartrecruiters':
+        return (await Platforms.smartRecruiters(c, maxJobsPerCompany)).jobs;
+      case 'workable':
+        return (await Platforms.workable(c)).jobs;
       default:
         return [];
     }
@@ -892,6 +963,10 @@ class JobFetcher {
         // The board didn't work out: carry on with the other levels
       }
     }
+
+    // LEVEL 1.7: smarter extractors (job feeds, JSON lists hidden in the page)
+    final smart = await SmartExtractors.tryAll(company, doc, firstHtml, pageUri);
+    if (smart != null && smart.jobs.isNotEmpty) return smart.jobs;
 
     // LEVEL 2: collect job links from up to 3 pages
     final collected = <_JobLink>[];
