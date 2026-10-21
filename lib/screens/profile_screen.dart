@@ -145,7 +145,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ===== PART 3: CV =====
   Future<void> _pickCv() async {
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'doc', 'docx'],
     );
