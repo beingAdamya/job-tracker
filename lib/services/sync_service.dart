@@ -42,7 +42,8 @@ class SyncService {
       final hadJobsBefore = savedJobs.any((j) => j.companyId == company.id);
 
       try {
-        final fetched = await JobFetcher.fetch(company, known: savedById);
+        final fetched = await JobFetcher.fetch(company,
+            known: savedById, maxAgeDays: settings.maxAgeDays);
 
         for (final job in fetched) {
           final old = savedById[job.id];

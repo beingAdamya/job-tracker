@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/background_service.dart';
 import '../services/battery_service.dart';
 import '../services/notification_service.dart';
+import '../services/update_service.dart';
+import '../widgets/app_snack.dart';
+import '../widgets/update_dialog.dart';
 import 'companies_tab.dart';
 import 'jobs_tab.dart';
 import 'settings_screen.dart';
@@ -14,12 +17,15 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _resetCount = 0; // changes after a reset → tabs rebuild from scratch
+  int _resetCount = 0; // changes → both tabs rebuild and reload from storage
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _firstRunPrompts());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _firstRunPrompts();
+      await _checkUpdateQuietly();
+    });
   }
 
   // Notification permission first, then a friendly battery explanation (once)
@@ -58,18 +64,27 @@ class _HomeScreenState extends State<HomeScreen> {
     if (allow == true) await BatteryService.request();
   }
 
+  // At most once a day, and only once per new version
+  Future<void> _checkUpdateQuietly() async {
+    final update = await UpdateService.checkQuietly();
+    if (update == null || !mounted) return;
+    await UpdateService.markPrompted(update);
+    if (!mounted) return;
+    await showUpdateDialog(context, update);
+  }
+
   Future<void> _openSettings() async {
     final didReset = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (_) => const SettingsScreen()),
     );
 
-    if (didReset == true && mounted) {
-      setState(() => _resetCount++);
+    if (!mounted) return;
+    setState(() => _resetCount++); // reload both tabs: settings may have changed
+
+    if (didReset == true) {
       BackgroundService.ensureScheduled(); // reset wiped the saved schedule
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Everything was reset')),
-      );
+      showAppSnack(context, 'Everything was reset');
     }
   }
 
@@ -94,12 +109,16 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-        body: TabBarView(
-          key: ValueKey(_resetCount),
-          children: const [
-            JobsTab(),
-            CompaniesTab(),
-          ],
+        body: SafeArea(
+          top: false,
+          bottom: false,
+          child: TabBarView(
+            key: ValueKey(_resetCount),
+            children: const [
+              JobsTab(),
+              CompaniesTab(),
+            ],
+          ),
         ),
       ),
     );

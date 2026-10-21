@@ -6,6 +6,8 @@ import '../models/job.dart';
 import 'notification_service.dart';
 import 'settings_service.dart';
 import 'sync_service.dart';
+import '../app_info.dart';
+import 'update_service.dart';
 
 // The entry point Android calls in the background.
 // It must be a top-level function with this annotation.
@@ -58,15 +60,6 @@ class BackgroundService {
     await prefs.setInt(_scheduledKey, settings.syncHours);
   }
 
-  // Run one check right now in the background (for testing)
-  static Future<void> runNow() async {
-    await Workmanager().registerOneOffTask(
-      'job_sync_now_${DateTime.now().millisecondsSinceEpoch}',
-      taskName,
-      constraints: Constraints(networkType: NetworkType.connected),
-    );
-  }
-
   // ===== The check itself =====
   static Future<void> runCheck() async {
     final settings = await SettingsService.load();
@@ -76,6 +69,15 @@ class BackgroundService {
 
     await NotificationService.init();
     await _notify(result.notifiable, settings);
+    final update = await UpdateService.checkQuietly();
+    if (update != null) {
+      await NotificationService.show(
+        id: 3,
+        title: 'Update available',
+        body: '${AppInfo.appName} ${update.version} is ready to download.',
+      );
+      await UpdateService.markPrompted(update);
+    }
   }
 
   // The first keyword found in title, role, location or mode (or null)

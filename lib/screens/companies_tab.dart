@@ -3,6 +3,8 @@ import '../models/company.dart';
 import '../services/storage_service.dart';
 import 'dart:async';
 import '../services/job_fetcher.dart';
+import '../widgets/app_snack.dart';
+import '../widgets/layout.dart';
 
 class CompaniesTab extends StatefulWidget {
   const CompaniesTab({super.key});
@@ -96,24 +98,20 @@ class _CompaniesTabState extends State<CompaniesTab> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(linkChanged
-            ? 'Saved. Tap refresh on the Jobs tab to load jobs from the new link'
-            : 'Company updated'),
-      ),
+    showAppSnack(
+      context,
+      linkChanged
+          ? 'Saved. Tap refresh on the Jobs tab to load jobs from the new link'
+          : 'Company updated',
     );
   }
 
   void _toggleMute(Company company) {
     setState(() => company.isMuted = !company.isMuted); // flip true/false
     _save();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(company.isMuted
-            ? '${company.name} muted'
-            : '${company.name} unmuted'),
-      ),
+    showAppSnack(
+      context,
+      company.isMuted ? '${company.name} muted' : '${company.name} unmuted',
     );
   }
 
@@ -336,7 +334,12 @@ Widget _buildBody() {
         ),
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.only(bottom: 80),
+            padding: EdgeInsets.fromLTRB(
+              sidePadding(context, 700, min: 0),
+              0,
+              sidePadding(context, 700, min: 0),
+              90,
+            ),
             itemCount: _companies.length,
             itemBuilder: (context, index) {
               final company = _companies[index];

@@ -14,7 +14,9 @@ class JobFetcher {
 
   // ===== MAIN ENTRY: pick the right method for this company's link =====
   static Future<List<Job>> fetch(Company company,
-      {Map<String, Job> known = const {}, bool quick = false}) async {
+      {Map<String, Job> known = const {},
+      bool quick = false,
+      int maxAgeDays = 0}) async {
     List<Job> jobs;
 
     switch (detectBoard(company.link)) {
@@ -34,6 +36,12 @@ class JobFetcher {
         jobs = await _fetchGeneric(company, known, quick);
         break;
     }
+
+    if (maxAgeDays > 0) {
+      final cutoff = DateTime.now().subtract(Duration(days: maxAgeDays));
+      jobs = jobs.where((j) => j.postedDate.isAfter(cutoff)).toList();
+    }
+
 
     // Newest first, then keep only the top 100
     jobs.sort((a, b) => b.postedDate.compareTo(a.postedDate));

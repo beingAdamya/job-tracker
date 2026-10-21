@@ -5,9 +5,19 @@ import '../models/app_settings.dart';
 import '../services/background_service.dart';
 import '../services/battery_service.dart';
 import '../services/job_fetcher.dart';
-import '../services/notification_service.dart';
+import '../services/profile_service.dart';
 import '../services/settings_service.dart';
 import '../services/storage_service.dart';
+import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
+import '../widgets/app_snack.dart';
+import '../widgets/color_picker_sheet.dart';
+import '../widgets/layout.dart';
+import 'profile_screen.dart';
+import '../app_info.dart';
+import '../services/update_service.dart';
+import '../widgets/bug_report.dart';
+import '../widgets/update_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -22,6 +32,8 @@ class _SettingsScreenState extends State<SettingsScreen>
   AppSettings _settings = AppSettings();
   bool _isLoading = true;
   bool _batteryOk = false;
+  String _version = '';              
+  bool _checkingUpdate = false;    
   final _keywordsController = TextEditingController();
 
   // ===== PART 2: Start-up, loading and saving =====
@@ -54,6 +66,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       _isLoading = false;
     });
     _checkBattery();
+    _loadVersion(); 
   }
 
   Future<void> _save() async {
@@ -63,7 +76,40 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   void _snack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    showAppSnack(context, text);
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final v = await UpdateService.installedVersion();
+      if (!mounted) return;
+      setState(() => _version = v);
+    } catch (_) {}
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+
+    try {
+      final update = await UpdateService.checkForUpdate(); // null = up to date
+      if (!mounted) return;
+      if (update == null) {
+        _snack('You are up to date (version $_version)');
+      } else {
+        await showUpdateDialog(context, update);
+      }
+    } catch (e) {
+      _snack(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  // Restyle the whole app now, and remember the choice
+  void _applyTheme() {
+    ThemeController.instance.apply(_settings);
+    _save();
   }
 
   // ===== PART 3: Battery =====
@@ -82,41 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
-  // ===== PART 4: Testing helpers =====
-  Future<void> _testNotification() async {
-    final allowed = await NotificationService.requestPermission();
-    if (!allowed) {
-      _snack('Notifications are blocked. Allow them in the phone settings.');
-      return;
-    }
-    await NotificationService.show(
-      id: 99,
-      title: 'Test notification',
-      body: 'If you can read this, notifications work.',
-    );
-  }
-
-  // Makes the app "forget" its 3 newest jobs, so the next check finds them
-  // again as NEW jobs
-  Future<void> _forgetNewestJobs() async {
-    final jobs = await StorageService.loadJobs();
-    if (jobs.length < 4) {
-      _snack('Add a company with at least 4 jobs first.');
-      return;
-    }
-    jobs.sort((a, b) => b.postedDate.compareTo(a.postedDate));
-    final forgotten = jobs.take(3).map((j) => j.id).toSet();
-    jobs.removeWhere((j) => forgotten.contains(j.id));
-    await StorageService.saveJobs(jobs);
-    _snack('Forgot the 3 newest jobs. Now run the background check.');
-  }
-
-  Future<void> _runBackgroundNow() async {
-    await BackgroundService.runNow();
-    _snack('Started. A notification should appear within a minute.');
-  }
-
-  // ===== PART 5: Reset all =====
+  // ===== PART 4: Reset all =====
   Future<void> _confirmReset() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -124,8 +136,8 @@ class _SettingsScreenState extends State<SettingsScreen>
         icon: const Icon(Icons.warning_amber_rounded, color: Colors.red),
         title: const Text('Reset everything?'),
         content: const Text(
-          'This permanently deletes all your companies, jobs, favourites '
-          'and settings. This cannot be undone.',
+          'This permanently deletes all your companies, jobs, favourites, '
+          'settings, profile and CV. This cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -143,13 +155,15 @@ class _SettingsScreenState extends State<SettingsScreen>
 
     if (confirmed != true) return; // Cancel, or tapped outside
 
+    await ProfileService.deleteCvFiles(); // the CV copy
     await StorageService.clearAll();
+    ThemeController.instance.apply(AppSettings()); // back to the default look
     JobFetcher.maxJobsPerCompany = 100; // back to the default
     if (!mounted) return;
     Navigator.pop(context, true); // tell the home screen a reset happened
   }
 
-  // ===== PART 6: Small building blocks =====
+  // ===== PART 5: Small building blocks =====
   Widget _sectionTitle(String text) {
     return Padding(
       padding: const EdgeInsets.only(top: 24, bottom: 4),
@@ -186,16 +200,124 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ===== PART 7: Drawing the screen =====
+  Widget _colorTile(String label, Color current, void Function(int) assign) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: current,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.grey),
+        ),
+      ),
+      title: Text(label),
+      trailing: const Icon(Icons.edit_outlined, size: 20),
+      onTap: () async {
+        final picked = await pickColor(context, title: label);
+        if (picked == null) return;
+        setState(() => assign(picked.toARGB32()));
+        _applyTheme();
+      },
+    );
+  }
+
+  // ===== PART 6: Drawing the screen =====
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.symmetric(
+                horizontal: sidePadding(context, 600),
+                vertical: 16,
+              ),
               children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.badge_outlined),
+                  title: const Text('Profile and CV'),
+                  subtitle: const Text(
+                      'Your details and CV, ready to copy into applications'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                  ),
+                ),
+
+                _sectionTitle('APPEARANCE'),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(
+                      value: 'system',
+                      icon: Icon(Icons.brightness_auto),
+                      label: Text('System'),
+                    ),
+                    ButtonSegment(
+                      value: 'light',
+                      icon: Icon(Icons.light_mode),
+                      label: Text('Light'),
+                    ),
+                    ButtonSegment(
+                      value: 'dark',
+                      icon: Icon(Icons.dark_mode),
+                      label: Text('Dark'),
+                    ),
+                  ],
+                  selected: {_settings.themeMode},
+                  onSelectionChanged: (choice) {
+                    setState(() => _settings.themeMode = choice.first);
+                    _applyTheme();
+                  },
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Custom colours'),
+                  subtitle: const Text(
+                      'Change background, text and accent colours on top of the theme above'),
+                  value: _settings.customEnabled,
+                  onChanged: (on) {
+                    setState(() => _settings.customEnabled = on);
+                    _applyTheme();
+                  },
+                ),
+                if (_settings.customEnabled) ...[
+                  _colorTile('Background', scheme.surface,
+                      (c) => _settings.customBg = c),
+                  _colorTile('Text', scheme.onSurface,
+                      (c) => _settings.customText = c),
+                  _colorTile('Accent', scheme.primary,
+                      (c) => _settings.customAccent = c),
+                  if (contrastRatio(scheme.surface, scheme.onSurface) < 4.5)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        'These colours are hard to read together. Choose a background and text colour that differ more.',
+                        style: TextStyle(color: Colors.orange),
+                      ),
+                    ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _settings.customBg = null;
+                          _settings.customText = null;
+                          _settings.customAccent = null;
+                        });
+                        _applyTheme();
+                      },
+                      child: const Text('Reset colours'),
+                    ),
+                  ),
+                ],
+
                 _sectionTitle('SYNCING'),
                 _intDropdown(
                   'Sync frequency',
@@ -215,6 +337,16 @@ class _SettingsScreenState extends State<SettingsScreen>
                   {for (final n in jobLimitOptions) n: '$n jobs'},
                   (value) {
                     setState(() => _settings.maxJobs = value);
+                    _save();
+                  },
+                ),
+                _intDropdown(
+                  'Show jobs posted within',
+                  'Older jobs are hidden. Choose a longer time, then refresh, to load older ones',
+                  _settings.maxAgeDays,
+                  jobAgeOptions,
+                  (value) {
+                    setState(() => _settings.maxAgeDays = value);
                     _save();
                   },
                 ),
@@ -297,30 +429,59 @@ class _SettingsScreenState extends State<SettingsScreen>
                 const Padding(
                   padding: EdgeInsets.only(top: 8),
                   child: Text(
-                    'Deletes all companies, jobs, favourites and settings.',
+                    'Deletes all companies, jobs, favourites, settings, profile and CV.',
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ),
 
-                _sectionTitle('TESTING'),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.notifications_active),
-                  label: const Text('Send test notification'),
-                  onPressed: _testNotification,
+                _sectionTitle('ABOUT'),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.system_update_outlined),
+                  title: const Text('Check for update'),
+                  subtitle: Text(_version.isEmpty
+                      ? 'Version unknown'
+                      : 'Installed version $_version'),
+                  trailing: _checkingUpdate
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chevron_right),
+                  onTap: _checkForUpdate,
                 ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.history),
-                  label: const Text('Forget 3 newest jobs'),
-                  onPressed: _forgetNewestJobs,
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.bug_report_outlined),
+                  title: const Text('Report a bug'),
+                  subtitle: const Text('Tell us what went wrong'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => showBugReportSheet(context),
                 ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.sync),
-                  label: const Text('Run background check now'),
-                  onPressed: _runBackgroundNow,
+
+                const SizedBox(height: 32),
+                const Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Made with '),
+                      Icon(Icons.favorite, color: Colors.red, size: 18),
+                      Text(' from ${AppInfo.developer}'),
+                    ],
+                  ),
                 ),
+                const SizedBox(height: 6),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'If you find this app useful, support the developer building such amazing apps.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                SizedBox(height: 24 + MediaQuery.of(context).padding.bottom),
+
               ],
             ),
     );

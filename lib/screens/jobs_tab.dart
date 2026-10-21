@@ -5,6 +5,9 @@ import '../services/storage_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/job_card.dart';
 import '../services/job_keys.dart';
+import '../widgets/app_snack.dart';
+import '../services/settings_service.dart';
+import '../widgets/layout.dart';
 
 class JobsTab extends StatefulWidget {
   const JobsTab({super.key});
@@ -48,12 +51,14 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
   String _sortBy = 'date';                          // NEW: title/date/location/mode
   bool _ascending = false;                          // NEW: false = newest first
   final _searchController = TextEditingController(); // NEW
+  int _maxAgeDays = 0;
 
   // ===== PART 2: Loading =====
 
   Future<void> _loadData() async {
     final savedJobs = await StorageService.loadJobs();
     final companies = await StorageService.loadCompanies();
+    final settings = await SettingsService.load();
 
     // Only keep jobs whose company still exists
     final companyIds = companies.map((c) => c.id).toSet();
@@ -63,6 +68,7 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() {
       _jobs = jobs;
+      _maxAgeDays = settings.maxAgeDays;
       _companyOrder = {
         for (var i = 0; i < companies.length; i++) companies[i].id: i
       };
@@ -79,10 +85,17 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
   // The pipeline: everything that decides what appears on screen
   List<Job> get _visibleJobs {
     // Stage 1: not removed, not from a muted company
+    final cutoff = _maxAgeDays > 0
+        ? DateTime.now().subtract(Duration(days: _maxAgeDays))
+        : null;
+
     var list = _jobs.where((j) {
       final muted = _mutedCompanyIds.contains(j.companyId) ||
           _mutedCompanyNames.contains(j.companyName.toLowerCase());
-      return !j.isRemoved && !muted;
+      // Favourites always stay, however old
+      final tooOld =
+          cutoff != null && j.postedDate.isBefore(cutoff) && !j.isFavourite;
+      return !j.isRemoved && !muted && !tooOld;
     }).toList();
 
     final ordered = [...list]
@@ -188,9 +201,10 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
 
   // NEW: refresh (fake delay for now; real fetching comes in Lesson 5)
   Future<void> _refresh() async {
+    if (_isRefreshing) return;
     setState(() => _isRefreshing = true);
 
-    final result = await SyncService.syncAll(); // the real fetch!
+    final result = await SyncService.syncAll(); // the real fetch
     await _loadData();
 
     if (!mounted) return;
@@ -258,21 +272,19 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
     });
     _save();
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${job.title} removed'),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () {
-            setState(() {
-              for (final j in copies) {
-                j.isRemoved = false;
-              }
-            });
-            _save();
-          },
-        ),
+    showAppSnack(
+      context,
+      '${job.title} removed',
+      action: SnackBarAction(
+        label: 'UNDO',
+        onPressed: () {
+          setState(() {
+            for (final j in copies) {
+              j.isRemoved = false;
+            }
+          });
+          _save();
+        },
       ),
     );
   }
@@ -285,10 +297,7 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
     }
   }
 
-  void _showMessage(String text) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
+  void _showMessage(String text) => showAppSnack(context, text);
 
   // ===== PART 5: Long-press menu =====
   void _showJobOptions(Job job) {
@@ -383,22 +392,25 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
   // ===== PART 6: Drawing the screen =====
   @override
   Widget build(BuildContext context) {
+    // Android 15+ draws apps behind the navigation bar: stay above it
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
     return Scaffold(
-      body: Stack(                                   // NEW: layers on top of each other
+      body: Stack(
         children: [
-          _buildBody(),
-          Positioned(                                // sort: bottom-left
+          Positioned.fill(child: _buildBody(bottomInset)),
+          Positioned(
             left: 16,
-            bottom: 16,
+            bottom: 24 + bottomInset,
             child: FloatingActionButton.small(
               heroTag: 'sortButton',
               onPressed: _showSortOptions,
               child: const Icon(Icons.sort),
             ),
           ),
-          Positioned(                                // refresh: bottom-right
+          Positioned(
             right: 16,
-            bottom: 16,
+            bottom: 24 + bottomInset,
             child: FloatingActionButton(
               heroTag: 'refreshButton',
               onPressed: _isRefreshing ? null : _refresh,
@@ -416,142 +428,153 @@ class _JobsTabState extends State<JobsTab> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(double bottomInset) {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
     final jobs = _visibleJobs;
 
-    String emptyMessage = 'No jobs yet.\nAdd a company, then tap refresh.';
+    String emptyMessage = 'No jobs yet.\nAdd a company, then pull down to refresh.';
     if (_showOnlyFavourites && _searchText.isEmpty) {
       emptyMessage = 'No favourites yet';
     } else if (_searchText.isNotEmpty) {
       emptyMessage = 'No jobs match your search';
     }
 
-    return Column(
-      children: [
-        // Search bar
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: TextField(
-            controller: _searchController,
-            onChanged: (value) => setState(() => _searchText = value),
-            decoration: InputDecoration(
-              hintText: 'Search jobs...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchText.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _searchText = '');
-                      },
-                    ),
-              isDense: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(30),
-              ),
+    final side = sidePadding(context, 800, min: 12);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _collapseAll, // tap outside a card → collapse
+      child: RefreshIndicator(
+        onRefresh: _refresh, // pull down → refresh
+        child: CustomScrollView(
+          // Lets you pull down even when the list is short or empty
+          physics: const AlwaysScrollableScrollPhysics(),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          slivers: [
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(side, 12, side, 0),
+              sliver: SliverToBoxAdapter(child: _searchBar()),
             ),
-          ),
-        ),
-
-        // Count (left) + favourites toggle (right)
-        Padding(
-          padding: const EdgeInsets.only(left: 16, right: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${jobs.length} ${jobs.length == 1 ? 'job' : 'jobs'} • $_sortLabel',
-                style: const TextStyle(color: Colors.grey),
-              ),
-              IconButton(
-                tooltip: _showOnlyFavourites
-                    ? 'Show all jobs'
-                    : 'Show favourites only',
-                icon: Icon(
-                  _showOnlyFavourites ? Icons.star : Icons.star_border,
-                  color: Colors.amber,
-                ),
-                onPressed: () =>
-                    setState(() => _showOnlyFavourites = !_showOnlyFavourites),
-              ),
-            ],
-          ),
-        ),
-
-        // The list
-        Expanded(
-          child: jobs.isEmpty
-              ? Center(
-                  child: Text(
-                    emptyMessage,
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              : GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _collapseAll,
-                  child: ListView.builder(
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 90),
-                    itemCount: jobs.length,
-                    itemBuilder: (context, index) {
-                      final job = jobs[index];
-
-                      return Dismissible(
-                        key: ValueKey(job.id),
-
-                        // Swipe RIGHT → remove
-                        background: Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          color: Colors.red,
-                          alignment: Alignment.centerLeft,
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: const Icon(Icons.delete, color: Colors.white),
-                        ),
-
-                        // Swipe LEFT → favourite
-                        secondaryBackground: Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          color: Colors.amber,
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Icon(
-                            job.isFavourite ? Icons.star_border : Icons.star,
-                            color: Colors.white,
-                          ),
-                        ),
-
-                        confirmDismiss: (direction) async {
-                          if (direction == DismissDirection.endToStart) {
-                            _toggleFavourite(job);
-                            return false;
-                          }
-                          return true;
-                        },
-
-                        onDismissed: (direction) => _removeJob(job),
-
-                        child: JobCard(
-                          job: job,
-                          isExpanded: _expandedJobId == job.id,
-                          alsoListedBy: _expandedJobId == job.id    // NEW
-                              ? _otherListings(job)
-                              : const <String>[],
-                          onTap: () => _toggleExpand(job),
-                          onLongPress: () => _showJobOptions(job),
-                        ),
-                      );
-                    },
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(side + 4, 0, side, 0),
+              sliver: SliverToBoxAdapter(child: _countRow(jobs.length)),
+            ),
+            if (jobs.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text(emptyMessage, textAlign: TextAlign.center),
                   ),
                 ),
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(side, 4, side, 90 + bottomInset),
+                sliver: SliverList.builder(
+                  itemCount: jobs.length,
+                  itemBuilder: (context, index) => _jobItem(jobs[index]),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _searchBar() {
+    return TextField(
+      controller: _searchController,
+      onChanged: (value) => setState(() => _searchText = value),
+      decoration: InputDecoration(
+        hintText: 'Search jobs...',
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: _searchText.isEmpty
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.clear),
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() => _searchText = '');
+                },
+              ),
+        isDense: true,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
+      ),
+    );
+  }
+
+  // Count and sort name (left) + favourites toggle (right)
+  Widget _countRow(int count) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          '$count ${count == 1 ? 'job' : 'jobs'} • $_sortLabel',
+          style: const TextStyle(color: Colors.grey),
+        ),
+        IconButton(
+          tooltip:
+              _showOnlyFavourites ? 'Show all jobs' : 'Show favourites only',
+          icon: Icon(
+            _showOnlyFavourites ? Icons.star : Icons.star_border,
+            color: Colors.amber,
+          ),
+          onPressed: () =>
+              setState(() => _showOnlyFavourites = !_showOnlyFavourites),
         ),
       ],
+    );
+  }
+
+  // One swipeable job card
+  Widget _jobItem(Job job) {
+    return Dismissible(
+      key: ValueKey(job.id),
+
+      // Swipe RIGHT → remove
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        color: Colors.red,
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+
+      // Swipe LEFT → favourite
+      secondaryBackground: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        color: Colors.amber,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Icon(
+          job.isFavourite ? Icons.star_border : Icons.star,
+          color: Colors.white,
+        ),
+      ),
+
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.endToStart) {
+          _toggleFavourite(job);
+          return false;
+        }
+        return true;
+      },
+
+      onDismissed: (direction) => _removeJob(job),
+
+      child: JobCard(
+        job: job,
+        isExpanded: _expandedJobId == job.id,
+        alsoListedBy:
+            _expandedJobId == job.id ? _otherListings(job) : const <String>[],
+        onTap: () => _toggleExpand(job),
+        onLongPress: () => _showJobOptions(job),
+      ),
     );
   }
 }
