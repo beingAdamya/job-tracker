@@ -1,12 +1,13 @@
 import 'dart:ui';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
+import '../app_info.dart';
 import '../models/app_settings.dart';
 import '../models/job.dart';
+import 'account.dart';
 import 'notification_service.dart';
 import 'settings_service.dart';
 import 'sync_service.dart';
-import '../app_info.dart';
 import 'update_service.dart';
 
 // The entry point Android calls in the background.
@@ -27,9 +28,9 @@ void callbackDispatcher() {
 class BackgroundService {
   static const String taskName = 'job_sync';
   static const String _uniqueName = 'job_sync_periodic';
-  static const String _scheduledKey = 'scheduled_sync_hours';
-  static const String _lastBatchKey = 'notify_last_batch';
-  static const String _pendingKey = 'notify_pending';
+  static const String _scheduledKey = 'scheduled_sync_hours'; // per phone
+  static const String _lastBatchKey = 'notify_last_batch'; // per account
+  static const String _pendingKey = 'notify_pending'; // per account
 
   // ===== Scheduling =====
   static Future<void> init() async {
@@ -54,7 +55,7 @@ class BackgroundService {
       frequency: Duration(hours: settings.syncHours),
       constraints: Constraints(
         networkType: NetworkType.connected, // needs internet
-        requiresBatteryNotLow: true,        // not when the battery is low
+        requiresBatteryNotLow: true, // not when the battery is low
       ),
     );
     await prefs.setInt(_scheduledKey, settings.syncHours);
@@ -62,6 +63,12 @@ class BackgroundService {
 
   // ===== The check itself =====
   static Future<void> runCheck() async {
+    // Nobody signed in → nothing to check for
+    if (await Account.activeUid() == null) {
+      print('Background check skipped: nobody is signed in');
+      return;
+    }
+
     final settings = await SettingsService.load();
     final result = await SyncService.syncAll();
     print('Background check: ${result.newJobs.length} new, '
@@ -69,6 +76,8 @@ class BackgroundService {
 
     await NotificationService.init();
     await _notify(result.notifiable, settings);
+
+    // Once a day: tell the user if a new version of the app is out
     final update = await UpdateService.checkQuietly();
     if (update != null) {
       await NotificationService.show(
@@ -128,9 +137,10 @@ class BackgroundService {
     // 2. Everything else: one summary, at most once per notification frequency
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
+    final p = await Account.prefix();
 
-    var pending = (prefs.getInt(_pendingKey) ?? 0) + others.length;
-    final lastBatch = prefs.getInt(_lastBatchKey) ?? 0;
+    var pending = (prefs.getInt('$p$_pendingKey') ?? 0) + others.length;
+    final lastBatch = prefs.getInt('$p$_lastBatchKey') ?? 0;
     final now = DateTime.now().millisecondsSinceEpoch;
     final waitMs = settings.notifyHours * 60 * 60 * 1000;
     const toleranceMs = 5 * 60 * 1000; // Android runs checks a little early/late
@@ -142,8 +152,8 @@ class BackgroundService {
         body: 'Open Job Tracker to see what is new.',
       );
       pending = 0;
-      await prefs.setInt(_lastBatchKey, now);
+      await prefs.setInt('$p$_lastBatchKey', now);
     }
-    await prefs.setInt(_pendingKey, pending);
+    await prefs.setInt('$p$_pendingKey', pending);
   }
 }

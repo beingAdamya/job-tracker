@@ -1,23 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart'
     show openAppSettings;
+import '../app_info.dart';
 import '../models/app_settings.dart';
+import '../services/auth_service.dart';
 import '../services/background_service.dart';
 import '../services/battery_service.dart';
 import '../services/job_fetcher.dart';
 import '../services/profile_service.dart';
 import '../services/settings_service.dart';
 import '../services/storage_service.dart';
+import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/app_snack.dart';
+import '../widgets/bug_report.dart';
 import '../widgets/color_picker_sheet.dart';
 import '../widgets/layout.dart';
-import 'profile_screen.dart';
-import '../app_info.dart';
-import '../services/update_service.dart';
-import '../widgets/bug_report.dart';
 import '../widgets/update_dialog.dart';
+import 'profile_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -32,8 +33,8 @@ class _SettingsScreenState extends State<SettingsScreen>
   AppSettings _settings = AppSettings();
   bool _isLoading = true;
   bool _batteryOk = false;
-  String _version = '';              
-  bool _checkingUpdate = false;    
+  String _version = '';
+  bool _checkingUpdate = false;
   final _keywordsController = TextEditingController();
 
   // ===== PART 2: Start-up, loading and saving =====
@@ -66,7 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       _isLoading = false;
     });
     _checkBattery();
-    _loadVersion(); 
+    _loadVersion();
   }
 
   Future<void> _save() async {
@@ -79,6 +80,13 @@ class _SettingsScreenState extends State<SettingsScreen>
     showAppSnack(context, text);
   }
 
+  // Restyle the whole app now, and remember the choice
+  void _applyTheme() {
+    ThemeController.instance.apply(_settings);
+    _save();
+  }
+
+  // ===== PART 3: Version and updates =====
   Future<void> _loadVersion() async {
     try {
       final v = await UpdateService.installedVersion();
@@ -106,13 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
-  // Restyle the whole app now, and remember the choice
-  void _applyTheme() {
-    ThemeController.instance.apply(_settings);
-    _save();
-  }
-
-  // ===== PART 3: Battery =====
+  // ===== PART 4: Battery =====
   Future<void> _checkBattery() async {
     final ok = await BatteryService.isUnrestricted();
     if (!mounted) return;
@@ -128,7 +130,35 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
-  // ===== PART 4: Reset all =====
+  // ===== PART 5: Sign out and reset =====
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text(
+          'Your companies, jobs and profile stay on this phone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await AuthService.signOut();
+    if (!mounted) return;
+    // Back to the first screen, where the login screen now appears
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   Future<void> _confirmReset() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -163,7 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     Navigator.pop(context, true); // tell the home screen a reset happened
   }
 
-  // ===== PART 5: Small building blocks =====
+  // ===== PART 6: Small building blocks =====
   Widget _sectionTitle(String text) {
     return Padding(
       padding: const EdgeInsets.only(top: 24, bottom: 4),
@@ -223,10 +253,11 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ===== PART 6: Drawing the screen =====
+  // ===== PART 7: Drawing the screen =====
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final user = AuthService.user;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -238,6 +269,19 @@ class _SettingsScreenState extends State<SettingsScreen>
                 vertical: 16,
               ),
               children: [
+                _sectionTitle('ACCOUNT'),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.account_circle_outlined),
+                  title: Text(user?.email ?? 'Not signed in'),
+                  subtitle: Text((user?.emailVerified ?? false)
+                      ? 'Email verified'
+                      : 'Email not verified'),
+                  trailing: TextButton(
+                    onPressed: _signOut,
+                    child: const Text('Sign out'),
+                  ),
+                ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.badge_outlined),
@@ -481,7 +525,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                   ),
                 ),
                 SizedBox(height: 24 + MediaQuery.of(context).padding.bottom),
-
               ],
             ),
     );

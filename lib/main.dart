@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
+import 'screens/auth_gate.dart';
 import 'services/background_service.dart';
+import 'services/firebase_boot.dart';
 import 'services/notification_service.dart';
 import 'theme/theme_controller.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await FirebaseBoot.init(); // sign-in service
   await ThemeController.instance.load(); // so the first frame has your theme
   await NotificationService.init();
   await BackgroundService.init();
@@ -28,7 +30,7 @@ class JobTrackerApp extends StatelessWidget {
         theme: theme.light,
         darkTheme: theme.dark,
         themeMode: theme.mode,
-        home: const HomeScreen(),
+        home: const AuthGate(),
       ),
     );
   }

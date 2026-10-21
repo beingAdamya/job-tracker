@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/company.dart';
+import 'account.dart';
 import 'fetch_log.dart';
 
 class DiagnosticsEntry {
@@ -15,7 +16,8 @@ class DiagnosticsService {
   static Future<Map<String, dynamic>> _loadAll() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
-    final text = prefs.getString(_key);
+    final p = await Account.prefix();
+    final text = prefs.getString('$p$_key');
     if (text == null) return {};
     try {
       return Map<String, dynamic>.from(jsonDecode(text));
@@ -32,7 +34,8 @@ class DiagnosticsService {
         'lines': log.lines,
       };
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_key, jsonEncode(all));
+      final p = await Account.prefix();
+      await prefs.setString('$p$_key', jsonEncode(all));
     } catch (_) {
       // diagnostics must never break a sync
     }

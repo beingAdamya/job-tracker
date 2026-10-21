@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "1026370344442",
+    "project_id": "jobtracker117",
+    "storage_bucket": "jobtracker117.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1026370344442:android:55acc9dae2490ba3314043",
+        "android_client_info": {
+          "package_name": "com.example.job_tracker"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1026370344442-ssjcg3tdqouao67cut8haagog2ksmkph.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChEuckk2hBD5gPY7-KTolohs4kD3O7tNU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1026370344442-ssjcg3tdqouao67cut8haagog2ksmkph.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1026370344442-1rtl7dcnkv7ittac50qep23b98totibf.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.jobTracker"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

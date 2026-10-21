@@ -379,6 +379,7 @@ Widget _buildBody() {
 
                 child: ListTile(
                   onTap: () => _showCompanyDialog(existing: company),
+                  onLongPress: () => showDiagnostics(context, company),
                   leading: CircleAvatar(
                     child: Text(company.name[0].toUpperCase()),
                   ),
